@@ -8,6 +8,8 @@ import re
 import unicodedata
 import sqlite3
 import asyncio
+import shutil
+import sys
 
 import cv2
 import mediapipe as mp
@@ -26,15 +28,335 @@ except ImportError:
 
 
 # ============================================================
+# PASTA PRINCIPAL
+# ============================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ============================================================
+# ATUALIZAÇÃO AUTOMÁTICA
+# ============================================================
+
+ARQUIVO_PRINCIPAL = os.path.join(
+    BASE_DIR,
+    "jarvis_tela.py"
+)
+
+ARQUIVO_VERSAO = os.path.join(
+    BASE_DIR,
+    "jarvis_version.txt"
+)
+
+ARQUIVO_BACKUP = os.path.join(
+    BASE_DIR,
+    "jarvis_tela_backup.py"
+)
+
+URL_VERSAO = (
+    "https://raw.githubusercontent.com/"
+    "taylorarielsoliveira-lab/"
+    "jarvis-updates/main/version.txt"
+)
+
+URL_ATUALIZACAO = (
+    "https://raw.githubusercontent.com/"
+    "taylorarielsoliveira-lab/"
+    "jarvis-updates/main/jarvis_tela.py"
+)
+
+
+def converter_versao(versao):
+    try:
+        return tuple(
+            int(parte)
+            for parte in versao.strip().split(".")
+        )
+    except Exception:
+        return (0,)
+
+
+def obter_versao_local():
+    if not os.path.exists(ARQUIVO_VERSAO):
+        with open(
+            ARQUIVO_VERSAO,
+            "w",
+            encoding="utf-8"
+        ) as arquivo:
+            arquivo.write("0.2")
+
+        return "0.2"
+
+    try:
+        with open(
+            ARQUIVO_VERSAO,
+            "r",
+            encoding="utf-8"
+        ) as arquivo:
+            return arquivo.read().strip()
+
+    except Exception:
+        return "0.2"
+
+
+def salvar_versao_local(versao):
+    with open(
+        ARQUIVO_VERSAO,
+        "w",
+        encoding="utf-8"
+    ) as arquivo:
+        arquivo.write(versao)
+
+
+def validar_codigo_atualizacao(codigo):
+    if len(codigo) < 1000:
+        print(
+            "Atualização ignorada: "
+            "arquivo remoto muito pequeno."
+        )
+        return False
+
+    itens_obrigatorios = [
+        "J.A.R.V.I.S",
+        "def responder",
+        "def sistema_de_voz",
+        "def desenhar_hud",
+        "def verificar_atualizacao_automatica"
+    ]
+
+    for item in itens_obrigatorios:
+        if item not in codigo:
+            print(
+                "Atualização recusada. "
+                "Componente ausente:",
+                item
+            )
+            return False
+
+    try:
+        compile(
+            codigo,
+            "jarvis_tela.py",
+            "exec"
+        )
+
+    except SyntaxError as erro:
+        print(
+            "Atualização com erro de sintaxe:",
+            erro
+        )
+        return False
+
+    return True
+
+
+def verificar_atualizacao_automatica():
+    try:
+        versao_local = obter_versao_local()
+
+        print("")
+        print("==============================")
+        print("   J.A.R.V.I.S. UPDATE")
+        print("==============================")
+        print("")
+        print(
+            "Versão instalada:",
+            versao_local
+        )
+        print(
+            "Verificando atualizações..."
+        )
+
+        resposta_versao = requests.get(
+            URL_VERSAO,
+            timeout=8
+        )
+
+        resposta_versao.raise_for_status()
+
+        versao_remota = resposta_versao.text.strip()
+
+        print(
+            "Versão disponível:",
+            versao_remota
+        )
+
+        if (
+            converter_versao(versao_remota)
+            <= converter_versao(versao_local)
+        ):
+            print(
+                "J.A.R.V.I.S. já está atualizado."
+            )
+            print("")
+            return False
+
+        print("")
+        print("Nova versão encontrada.")
+        print(
+            versao_local,
+            "->",
+            versao_remota
+        )
+        print("")
+        print(
+            "Baixando atualização..."
+        )
+
+        resposta_codigo = requests.get(
+            URL_ATUALIZACAO,
+            timeout=20
+        )
+
+        resposta_codigo.raise_for_status()
+
+        codigo_novo = resposta_codigo.text
+
+        print(
+            "Validando atualização..."
+        )
+
+        if not validar_codigo_atualizacao(
+            codigo_novo
+        ):
+            print(
+                "Atualização cancelada."
+            )
+            return False
+
+        print(
+            "Criando backup..."
+        )
+
+        if os.path.exists(
+            ARQUIVO_PRINCIPAL
+        ):
+            shutil.copy2(
+                ARQUIVO_PRINCIPAL,
+                ARQUIVO_BACKUP
+            )
+
+        temporario = os.path.join(
+            BASE_DIR,
+            "jarvis_tela_novo.py"
+        )
+
+        try:
+            with open(
+                temporario,
+                "w",
+                encoding="utf-8"
+            ) as arquivo:
+                arquivo.write(
+                    codigo_novo
+                )
+
+            with open(
+                temporario,
+                "r",
+                encoding="utf-8"
+            ) as arquivo:
+                teste = arquivo.read()
+
+            compile(
+                teste,
+                temporario,
+                "exec"
+            )
+
+            os.replace(
+                temporario,
+                ARQUIVO_PRINCIPAL
+            )
+
+            salvar_versao_local(
+                versao_remota
+            )
+
+            print("")
+            print(
+                "ATUALIZAÇÃO CONCLUÍDA"
+            )
+            print(
+                "Nova versão:",
+                versao_remota
+            )
+            print("")
+            print(
+                "Reiniciando J.A.R.V.I.S..."
+            )
+
+            time.sleep(1)
+
+            os.execv(
+                sys.executable,
+                [
+                    sys.executable,
+                    ARQUIVO_PRINCIPAL
+                ]
+            )
+
+        except Exception as erro:
+            print(
+                "Falha ao instalar atualização:",
+                erro
+            )
+
+            if os.path.exists(
+                ARQUIVO_BACKUP
+            ):
+                print(
+                    "Restaurando backup..."
+                )
+
+                shutil.copy2(
+                    ARQUIVO_BACKUP,
+                    ARQUIVO_PRINCIPAL
+                )
+
+            if os.path.exists(
+                temporario
+            ):
+                try:
+                    os.remove(
+                        temporario
+                    )
+                except Exception:
+                    pass
+
+            return False
+
+    except Exception as erro:
+        print(
+            "Não foi possível verificar "
+            "atualizações."
+        )
+        print(
+            "Continuando com a versão instalada."
+        )
+        print(
+            "Detalhes:",
+            erro
+        )
+        print("")
+
+    return False
+
+
+# ============================================================
+# VERIFICA UPDATE ANTES DE ABRIR
+# ============================================================
+
+verificar_atualizacao_automatica()
+
+
+# ============================================================
 # CONFIGURAÇÕES
 # ============================================================
 
 CIDADE_PADRAO = "Pará de Minas"
-MODELO_GEMINI = "gemini-3.5-flash-lite"
 
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
+MODELO_GEMINI = "gemini-3.5-flash-lite"
 
 ARQUIVO_MEMORIA = os.path.join(
     BASE_DIR,
@@ -45,7 +367,6 @@ COR_FUNDO = "#020609"
 COR_CIANO = "#00E5FF"
 COR_CIANO_ESCURO = "#006A78"
 COR_TEXTO = "#BDF7FF"
-COR_ALERTA = "#FFD54A"
 
 sistema_rodando = True
 modo_ativo = False
@@ -55,7 +376,7 @@ status_camera = "INICIANDO"
 status_mao = "INICIANDO"
 status_ia = "ONLINE"
 
-ultima_fala = "À disposição, senhor."
+ultima_fala = "À disposição senhor"
 
 
 # ============================================================
@@ -65,19 +386,15 @@ ultima_fala = "À disposição, senhor."
 cliente_gemini = None
 
 if genai is not None:
-
     try:
-
-        if os.getenv("GEMINI_API_KEY"):
-
+        if os.getenv(
+            "GEMINI_API_KEY"
+        ):
             cliente_gemini = genai.Client()
-
         else:
-
             status_ia = "SEM CHAVE"
 
     except Exception as erro:
-
         print(
             "Erro ao iniciar Gemini:",
             erro
@@ -85,12 +402,16 @@ if genai is not None:
 
         status_ia = "ERRO"
 
+else:
+    status_ia = "INDISPONÍVEL"
+
 
 # ============================================================
 # VOZ
 # ============================================================
 
 reconhecedor = sr.Recognizer()
+
 microfone = sr.Microphone()
 
 palavras_ativacao = [
@@ -121,7 +442,6 @@ comandos_dormir = [
 # ============================================================
 
 paises = {
-
     "japao": "Tokyo",
     "brasil": "Brasilia",
     "estados unidos": "Washington",
@@ -181,7 +501,6 @@ paises = {
 # ============================================================
 
 def normalizar(texto):
-
     texto = texto.lower().strip()
 
     texto = unicodedata.normalize(
@@ -201,7 +520,6 @@ def normalizar(texto):
 
 
 def limpar_texto_para_voz(texto):
-
     if not texto:
         return ""
 
@@ -212,13 +530,40 @@ def limpar_texto_para_voz(texto):
         flags=re.DOTALL
     )
 
-    texto = texto.replace("**", "")
-    texto = texto.replace("__", "")
-    texto = texto.replace("*", "")
-    texto = texto.replace("#", "")
-    texto = texto.replace("`", "")
-    texto = texto.replace(">", "")
-    texto = texto.replace("_", " ")
+    texto = texto.replace(
+        "**",
+        ""
+    )
+
+    texto = texto.replace(
+        "__",
+        ""
+    )
+
+    texto = texto.replace(
+        "*",
+        ""
+    )
+
+    texto = texto.replace(
+        "#",
+        ""
+    )
+
+    texto = texto.replace(
+        "`",
+        ""
+    )
+
+    texto = texto.replace(
+        ">",
+        ""
+    )
+
+    texto = texto.replace(
+        "_",
+        " "
+    )
 
     texto = re.sub(
         r"(?m)^\s*[-•]\s*",
@@ -252,14 +597,12 @@ def limpar_texto_para_voz(texto):
 # ============================================================
 
 def conectar_memoria():
-
     return sqlite3.connect(
         ARQUIVO_MEMORIA
     )
 
 
 def criar_banco_memoria():
-
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -286,12 +629,10 @@ def criar_banco_memoria():
     )
 
     conexao.commit()
-
     conexao.close()
 
 
 def salvar_memoria(conteudo):
-
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -311,12 +652,10 @@ def salvar_memoria(conteudo):
     )
 
     conexao.commit()
-
     conexao.close()
 
 
 def listar_memorias(limite=15):
-
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -344,7 +683,6 @@ def listar_memorias(limite=15):
 
 
 def apagar_memorias(termo):
-
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -363,7 +701,6 @@ def apagar_memorias(termo):
     resultados = cursor.fetchall()
 
     for resultado in resultados:
-
         cursor.execute(
             """
             DELETE FROM memorias
@@ -375,19 +712,15 @@ def apagar_memorias(termo):
         )
 
     conexao.commit()
-
     conexao.close()
 
-    return len(
-        resultados
-    )
+    return len(resultados)
 
 
 def salvar_conversa(
     usuario,
     jarvis
 ):
-
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -423,14 +756,10 @@ def salvar_conversa(
     )
 
     conexao.commit()
-
     conexao.close()
 
 
-def historico_recente(
-    limite=5
-):
-
+def historico_recente(limite=5):
     conexao = conectar_memoria()
 
     cursor = conexao.cursor()
@@ -457,11 +786,10 @@ def historico_recente(
 
 
 # ============================================================
-# VOZ JARVIS
+# VOZ DO JARVIS
 # ============================================================
 
 async def falar_async(texto):
-
     arquivo = os.path.join(
         BASE_DIR,
         "resposta_jarvis.mp3"
@@ -472,7 +800,6 @@ async def falar_async(texto):
     )
 
     try:
-
         voz = edge_tts.Communicate(
             texto,
             "pt-BR-AntonioNeural",
@@ -497,39 +824,32 @@ async def falar_async(texto):
             pygame.mixer.music.get_busy()
             and sistema_rodando
         ):
-
             pygame.time.Clock().tick(
                 10
             )
 
+        pygame.mixer.music.stop()
         pygame.mixer.quit()
 
     except Exception as erro:
-
         print(
             "Erro na voz:",
             erro
         )
 
     finally:
-
         if os.path.exists(
             arquivo
         ):
-
             try:
-
                 os.remove(
                     arquivo
                 )
-
-            except:
-
+            except Exception:
                 pass
 
 
 def falar(texto):
-
     global status_voz
     global ultima_fala
 
@@ -538,7 +858,6 @@ def falar(texto):
     status_voz = "FALANDO"
 
     try:
-
         asyncio.run(
             falar_async(
                 texto
@@ -546,13 +865,9 @@ def falar(texto):
         )
 
     finally:
-
         if modo_ativo:
-
             status_voz = "CONVERSA"
-
         else:
-
             status_voz = "ESPERA"
 
 
@@ -565,16 +880,13 @@ def requisicao_segura(
     parametros,
     tentativas=3
 ):
-
     ultimo_erro = None
 
     for tentativa in range(
         1,
         tentativas + 1
     ):
-
         try:
-
             resposta = requests.get(
                 url,
                 params=parametros,
@@ -586,14 +898,10 @@ def requisicao_segura(
             return resposta
 
         except requests.exceptions.RequestException as erro:
-
             ultimo_erro = erro
 
             if tentativa < tentativas:
-
-                time.sleep(
-                    1
-                )
+                time.sleep(1)
 
     raise ultimo_erro
 
@@ -603,15 +911,12 @@ def requisicao_segura(
 # ============================================================
 
 def descobrir_local(pergunta):
-
     texto = normalizar(
         pergunta
     )
 
     for pais, cidade in paises.items():
-
         if pais in texto:
-
             return cidade
 
     padroes = [
@@ -638,22 +943,18 @@ def descobrir_local(pergunta):
     ]
 
     for padrao in padroes:
-
         resultado = re.search(
             padrao,
             texto
         )
 
         if resultado:
-
             local = resultado.group(
                 1
             ).strip()
 
             for corte in cortes:
-
                 if corte in local:
-
                     local = local.split(
                         corte
                     )[0].strip()
@@ -663,14 +964,12 @@ def descobrir_local(pergunta):
             )
 
             if local:
-
                 return local
 
     return CIDADE_PADRAO
 
 
 def buscar_localizacao(nome):
-
     resposta = requisicao_segura(
         "https://geocoding-api.open-meteo.com/v1/search",
         {
@@ -689,7 +988,6 @@ def buscar_localizacao(nome):
     )
 
     if not resultados:
-
         return None
 
     local = resultados[0]
@@ -699,20 +997,19 @@ def buscar_localizacao(nome):
             "name",
             nome
         ),
-
         "pais": local.get(
             "country",
             ""
         ),
-
-        "latitude":
-            local["latitude"],
-
-        "longitude":
-            local["longitude"],
-
-        "timezone":
-            local["timezone"]
+        "latitude": local[
+            "latitude"
+        ],
+        "longitude": local[
+            "longitude"
+        ],
+        "timezone": local[
+            "timezone"
+        ]
     }
 
 
@@ -720,46 +1017,34 @@ def buscar_localizacao(nome):
 # HORÁRIO
 # ============================================================
 
-def horario_natural(
-    data_hora
-):
-
+def horario_natural(data_hora):
     hora24 = data_hora.hour
-
     minuto = data_hora.minute
 
     if (
         hora24 == 0
         and minuto == 0
     ):
-
         return "meia-noite"
 
     if (
         hora24 == 12
         and minuto == 0
     ):
-
         return "meio-dia"
 
     hora12 = hora24 % 12
 
     if hora12 == 0:
-
         hora12 = 12
 
     if minuto == 0:
-
         if hora12 == 1:
-
             return "1 hora"
 
-        return (
-            f"{hora12} horas"
-        )
+        return f"{hora12} horas"
 
     if hora12 == 1:
-
         return (
             f"1 hora e "
             f"{minuto} minutos"
@@ -776,7 +1061,6 @@ def horario_natural(
 # ============================================================
 
 def data_natural(data):
-
     meses = [
         "",
         "janeiro",
@@ -816,32 +1100,28 @@ def data_natural(data):
 # ============================================================
 
 def buscar_clima(local):
-
     resposta = requisicao_segura(
         "https://api.open-meteo.com/v1/forecast",
         {
-            "latitude":
-                local["latitude"],
-
-            "longitude":
-                local["longitude"],
-
+            "latitude": local[
+                "latitude"
+            ],
+            "longitude": local[
+                "longitude"
+            ],
             "current":
                 "temperature_2m,"
                 "apparent_temperature,"
                 "weather_code",
-
             "daily":
                 "temperature_2m_max,"
                 "temperature_2m_min,"
                 "precipitation_probability_max,"
                 "weather_code",
-
-            "forecast_days":
-                3,
-
-            "timezone":
-                local["timezone"]
+            "forecast_days": 3,
+            "timezone": local[
+                "timezone"
+            ]
         }
     )
 
@@ -849,9 +1129,7 @@ def buscar_clima(local):
 
 
 def descricao_tempo(codigo):
-
     descricoes = {
-
         0: "com céu limpo",
         1: "predominantemente limpo",
         2: "parcialmente nublado",
@@ -882,9 +1160,7 @@ def descricao_tempo(codigo):
 
 
 def pergunta_local(texto):
-
     termos = [
-
         "que horas",
         "qual o horario",
         "qual horario",
@@ -892,12 +1168,10 @@ def pergunta_local(texto):
         "hora agora",
         "quantas horas",
         "qual a hora",
-
         "que dia e hoje",
         "qual a data",
         "data de hoje",
         "dia da semana",
-
         "previsao do tempo",
         "como esta o tempo",
         "como vai estar o tempo",
@@ -918,13 +1192,11 @@ def pergunta_local(texto):
 
 
 def responder_local(pergunta):
-
     texto = normalizar(
         pergunta
     )
 
     try:
-
         cidade = descobrir_local(
             pergunta
         )
@@ -934,7 +1206,6 @@ def responder_local(pergunta):
         )
 
         if not local:
-
             return (
                 f"Senhor, não consegui "
                 f"localizar {cidade}."
@@ -942,7 +1213,9 @@ def responder_local(pergunta):
 
         agora = datetime.now(
             ZoneInfo(
-                local["timezone"]
+                local[
+                    "timezone"
+                ]
             )
         )
 
@@ -959,7 +1232,6 @@ def responder_local(pergunta):
         ]
 
         if local["pais"]:
-
             nome_local += (
                 f", {local['pais']}"
             )
@@ -1007,7 +1279,6 @@ def responder_local(pergunta):
         )
 
         if quer_hora:
-
             partes.append(
                 f"em {nome_local}, "
                 f"agora são "
@@ -1015,11 +1286,9 @@ def responder_local(pergunta):
             )
 
         if quer_data:
-
             data = agora
 
             if tem_amanha:
-
                 data += timedelta(
                     days=1
                 )
@@ -1030,7 +1299,6 @@ def responder_local(pergunta):
             )
 
         if quer_clima:
-
             clima = buscar_clima(
                 local
             )
@@ -1043,7 +1311,6 @@ def responder_local(pergunta):
                 tem_hoje
                 and tem_amanha
             ):
-
                 chuva_hoje = diaria[
                     "precipitation_probability_max"
                 ][0]
@@ -1065,7 +1332,6 @@ def responder_local(pergunta):
                 )
 
             else:
-
                 indice = (
                     1
                     if tem_amanha
@@ -1117,6 +1383,12 @@ def responder_local(pergunta):
                     f"é de {chuva} por cento"
                 )
 
+        if not partes:
+            return (
+                "Senhor, não consegui "
+                "identificar a informação solicitada."
+            )
+
         return (
             "Senhor, "
             + ". ".join(
@@ -1126,24 +1398,22 @@ def responder_local(pergunta):
         )
 
     except Exception as erro:
-
         print(
             "ERRO LOCAL:",
             erro
         )
 
         return (
-            "Senhor, não consegui acessar "
-            "essas informações agora."
+            "Senhor, não consegui "
+            "acessar essas informações agora."
         )
 
 
 # ============================================================
-# MEMÓRIA POR VOZ
+# COMANDOS DE MEMÓRIA
 # ============================================================
 
 def comando_memoria(pergunta):
-
     texto = normalizar(
         pergunta
     )
@@ -1158,11 +1428,9 @@ def comando_memoria(pergunta):
     ]
 
     for prefixo in prefixos_salvar:
-
         if texto.startswith(
             prefixo
         ):
-
             conteudo = pergunta[
                 len(prefixo):
             ].strip()
@@ -1178,6 +1446,38 @@ def comando_memoria(pergunta):
                 f"{conteudo}."
             )
 
+    prefixos_apagar = [
+        "esqueca que ",
+        "esquece que ",
+        "apague da memoria ",
+        "apagar da memoria "
+    ]
+
+    for prefixo in prefixos_apagar:
+        if texto.startswith(
+            prefixo
+        ):
+            termo = texto[
+                len(prefixo):
+            ].strip()
+
+            quantidade = apagar_memorias(
+                termo
+            )
+
+            if quantidade > 0:
+                return (
+                    True,
+                    "Certo senhor. "
+                    "Removi essa informação da memória."
+                )
+
+            return (
+                True,
+                "Senhor, não encontrei "
+                "essa informação na memória."
+            )
+
     perguntas_memoria = [
         "o que voce lembra sobre mim",
         "o que voce lembra de mim",
@@ -1191,13 +1491,11 @@ def comando_memoria(pergunta):
         frase in texto
         for frase in perguntas_memoria
     ):
-
         memorias = listar_memorias(
             10
         )
 
         if not memorias:
-
             return (
                 True,
                 "Senhor, ainda não tenho "
@@ -1220,17 +1518,15 @@ def comando_memoria(pergunta):
 
 
 # ============================================================
-# GEMINI
+# CONTEXTO PARA IA
 # ============================================================
 
 def contexto_memoria():
-
     memorias = listar_memorias(
         12
     )
 
     if not memorias:
-
         return (
             "Nenhuma memória salva."
         )
@@ -1241,13 +1537,11 @@ def contexto_memoria():
 
 
 def contexto_conversa():
-
     conversas = historico_recente(
         4
     )
 
     if not conversas:
-
         return (
             "Sem conversa recente."
         )
@@ -1255,7 +1549,6 @@ def contexto_conversa():
     partes = []
 
     for usuario, resposta in conversas:
-
         partes.append(
             f"Senhor: {usuario}"
         )
@@ -1269,19 +1562,20 @@ def contexto_conversa():
     )
 
 
-def responder_gemini(pergunta):
+# ============================================================
+# GEMINI
+# ============================================================
 
+def responder_gemini(pergunta):
     global status_ia
 
     if cliente_gemini is None:
-
         return (
             "Senhor, a inteligência "
             "artificial não está disponível."
         )
 
     try:
-
         status_ia = "PENSANDO"
 
         prompt = f"""
@@ -1290,7 +1584,7 @@ Você é J.A.R.V.I.S., um assistente pessoal por voz.
 Responda sempre em português do Brasil.
 Sempre trate o usuário como senhor.
 
-Seja natural, direto e inteligente.
+Seja natural, direto, inteligente e útil.
 
 A resposta será falada em voz alta.
 
@@ -1299,11 +1593,12 @@ Não use asteriscos.
 Não use hashtags.
 Não use tabelas.
 Não use emojis.
+Não use listas longas.
 
-Para perguntas simples responda brevemente.
-Explique melhor quando o senhor pedir explicação.
+Para perguntas simples, responda brevemente.
+Explique melhor quando o senhor pedir uma explicação.
 
-Use memórias quando forem relevantes.
+Use as memórias somente quando forem relevantes.
 Nunca invente memórias.
 
 MEMÓRIAS:
@@ -1320,18 +1615,35 @@ Responda diretamente:
 
         inicio = time.time()
 
-        interacao = (
-            cliente_gemini
-            .interactions.create(
-                model=MODELO_GEMINI,
-                input=prompt
+        try:
+            resposta_api = (
+                cliente_gemini
+                .models
+                .generate_content(
+                    model=MODELO_GEMINI,
+                    contents=prompt
+                )
             )
-        )
 
-        resposta = (
-            interacao.output_text
-            or ""
-        ).strip()
+            resposta = (
+                resposta_api.text
+                or ""
+            ).strip()
+
+        except Exception:
+            interacao = (
+                cliente_gemini
+                .interactions
+                .create(
+                    model=MODELO_GEMINI,
+                    input=prompt
+                )
+            )
+
+            resposta = (
+                interacao.output_text
+                or ""
+            ).strip()
 
         resposta = limpar_texto_para_voz(
             resposta
@@ -1349,10 +1661,15 @@ Responda diretamente:
 
         status_ia = "ONLINE"
 
+        if not resposta:
+            return (
+                "Senhor, não recebi uma resposta "
+                "da inteligência artificial."
+            )
+
         return resposta
 
     except Exception as erro:
-
         print(
             "ERRO GEMINI:",
             erro
@@ -1371,16 +1688,12 @@ Responda diretamente:
 # ============================================================
 
 def responder(pergunta):
-
-    eh_memoria, resposta = (
-        comando_memoria(
-            pergunta
-        )
+    eh_memoria, resposta_memoria = comando_memoria(
+        pergunta
     )
 
     if eh_memoria:
-
-        return resposta
+        return resposta_memoria
 
     texto = normalizar(
         pergunta
@@ -1389,7 +1702,6 @@ def responder(pergunta):
     if pergunta_local(
         texto
     ):
-
         return responder_local(
             pergunta
         )
@@ -1417,6 +1729,11 @@ janela.geometry(
     "1100x700"
 )
 
+janela.minsize(
+    800,
+    550
+)
+
 canvas = tk.Canvas(
     janela,
     bg=COR_FUNDO,
@@ -1432,492 +1749,447 @@ angulo_animacao = 0
 
 
 def desenhar_hud():
-
     global angulo_animacao
 
-    canvas.delete(
-        "all"
-    )
+    if not sistema_rodando:
+        return
 
-    largura = canvas.winfo_width()
-
-    altura = canvas.winfo_height()
-
-    centro_x = largura // 2
-
-    centro_y = altura // 2
-
-    agora_animacao = time.time()
-
-    # ========================================================
-    # ANIMAÇÃO QUANDO JARVIS ESTÁ FALANDO
-    # ========================================================
-
-    falando = (
-        status_voz == "FALANDO"
-    )
-
-    if falando:
-
-        # Valor entre 0 e 1
-        pulso = (
-            math.sin(
-                agora_animacao * 9
-            )
-            + 1
-        ) / 2
-
-        velocidade = 8
-
-    else:
-
-        pulso = (
-            math.sin(
-                agora_animacao * 2
-            )
-            + 1
-        ) / 2
-
-        velocidade = 2
-
-
-    # ========================================================
-    # TÍTULO
-    # ========================================================
-
-    canvas.create_text(
-        centro_x,
-        45,
-        text="J.A.R.V.I.S",
-        fill=COR_CIANO,
-        font=(
-            "Consolas",
-            28,
-            "bold"
-        )
-    )
-
-    canvas.create_text(
-        centro_x,
-        78,
-        text="PERSONAL INTELLIGENCE SYSTEM",
-        fill=COR_CIANO_ESCURO,
-        font=(
-            "Consolas",
-            10
-        )
-    )
-
-
-    # ========================================================
-    # CÍRCULOS EXTERNOS
-    # ========================================================
-
-    for raio in [
-        165,
-        135,
-        105
-    ]:
-
-        canvas.create_oval(
-            centro_x - raio,
-            centro_y - raio,
-            centro_x + raio,
-            centro_y + raio,
-            outline=COR_CIANO_ESCURO,
-            width=1
+    try:
+        canvas.delete(
+            "all"
         )
 
+        largura = canvas.winfo_width()
+        altura = canvas.winfo_height()
 
-    # ========================================================
-    # NÚCLEO PULSANTE
-    # ========================================================
+        centro_x = largura // 2
+        centro_y = altura // 2
 
-    if falando:
+        tempo_animacao = time.time()
 
-        raio_nucleo = (
-            48
-            + pulso * 15
+        falando = (
+            status_voz == "FALANDO"
         )
 
-    else:
+        if falando:
+            pulso = (
+                math.sin(
+                    tempo_animacao * 9
+                )
+                + 1
+            ) / 2
 
-        raio_nucleo = (
-            48
-            + pulso * 3
-        )
+            velocidade = 8
 
+        else:
+            pulso = (
+                math.sin(
+                    tempo_animacao * 2
+                )
+                + 1
+            ) / 2
 
-    # Glow externo
-
-    for camada in range(
-        3,
-        0,
-        -1
-    ):
-
-        raio_glow = (
-            raio_nucleo
-            + camada * 9
-        )
-
-        canvas.create_oval(
-            centro_x - raio_glow,
-            centro_y - raio_glow,
-            centro_x + raio_glow,
-            centro_y + raio_glow,
-            outline=COR_CIANO_ESCURO,
-            width=1
-        )
+            velocidade = 2
 
 
-    # Bola central
-
-    canvas.create_oval(
-        centro_x - raio_nucleo,
-        centro_y - raio_nucleo,
-        centro_x + raio_nucleo,
-        centro_y + raio_nucleo,
-        outline=COR_CIANO,
-        fill="#003642",
-        width=(
-            4
-            if falando
-            else 2
-        )
-    )
-
-
-    # ========================================================
-    # ONDAS DA VOZ
-    # ========================================================
-
-    if falando:
-
-        for i in range(
-            3
-        ):
-
-            fase = (
-                agora_animacao
-                * 80
-                + i * 28
-            ) % 90
-
-            raio_onda = (
-                70
-                + fase
-            )
-
-            canvas.create_oval(
-                centro_x - raio_onda,
-                centro_y - raio_onda,
-                centro_x + raio_onda,
-                centro_y + raio_onda,
-                outline=COR_CIANO_ESCURO,
-                width=1
-            )
-
-
-    # ========================================================
-    # ARCOS GIRANDO
-    # ========================================================
-
-    canvas.create_arc(
-        centro_x - 155,
-        centro_y - 155,
-        centro_x + 155,
-        centro_y + 155,
-        start=angulo_animacao,
-        extent=80,
-        style="arc",
-        outline=COR_CIANO,
-        width=3
-    )
-
-    canvas.create_arc(
-        centro_x - 125,
-        centro_y - 125,
-        centro_x + 125,
-        centro_y + 125,
-        start=-angulo_animacao,
-        extent=110,
-        style="arc",
-        outline=COR_CIANO,
-        width=2
-    )
-
-    canvas.create_arc(
-        centro_x - 95,
-        centro_y - 95,
-        centro_x + 95,
-        centro_y + 95,
-        start=angulo_animacao * 1.5,
-        extent=65,
-        style="arc",
-        outline=COR_CIANO,
-        width=2
-    )
-
-
-    # ========================================================
-    # MARCAS GIRANDO
-    # ========================================================
-
-    for angulo in range(
-        0,
-        360,
-        15
-    ):
-
-        rad = math.radians(
-            angulo
-            + angulo_animacao
-        )
-
-        r1 = 175
-        r2 = 185
-
-        x1 = (
-            centro_x
-            + math.cos(rad)
-            * r1
-        )
-
-        y1 = (
-            centro_y
-            + math.sin(rad)
-            * r1
-        )
-
-        x2 = (
-            centro_x
-            + math.cos(rad)
-            * r2
-        )
-
-        y2 = (
-            centro_y
-            + math.sin(rad)
-            * r2
-        )
-
-        canvas.create_line(
-            x1,
-            y1,
-            x2,
-            y2,
-            fill=(
-                COR_CIANO
-                if falando
-                else COR_CIANO_ESCURO
-            ),
-            width=1
-        )
-
-
-    # ========================================================
-    # TEXTO CENTRAL
-    # ========================================================
-
-    estado = (
-        "ONLINE"
-        if modo_ativo
-        else "STANDBY"
-    )
-
-    canvas.create_text(
-        centro_x,
-        centro_y - 18,
-        text="J.A.R.V.I.S",
-        fill=COR_TEXTO,
-        font=(
-            "Consolas",
-            15,
-            "bold"
-        )
-    )
-
-    canvas.create_text(
-        centro_x,
-        centro_y + 10,
-        text=(
-            "FALANDO"
-            if falando
-            else estado
-        ),
-        fill=COR_CIANO,
-        font=(
-            "Consolas",
-            11,
-            "bold"
-        )
-    )
-
-
-    # ========================================================
-    # STATUS ESQUERDA
-    # ========================================================
-
-    canvas.create_text(
-        45,
-        155,
-        anchor="w",
-        text="SYSTEM STATUS",
-        fill=COR_CIANO,
-        font=(
-            "Consolas",
-            13,
-            "bold"
-        )
-    )
-
-    informacoes = [
-        (
-            "CAMERA",
-            status_camera
-        ),
-        (
-            "HAND TRACK",
-            status_mao
-        ),
-        (
-            "VOICE",
-            status_voz
-        ),
-        (
-            "AI",
-            status_ia
-        ),
-        (
-            "MEMORY",
-            "ONLINE"
-        )
-    ]
-
-    y = 195
-
-    for nome, valor in informacoes:
+        # TÍTULO
 
         canvas.create_text(
+            centro_x,
             45,
-            y,
-            anchor="w",
-            text=f"{nome:<12} {valor}",
-            fill=COR_TEXTO,
+            text="J.A.R.V.I.S",
+            fill=COR_CIANO,
+            font=(
+                "Consolas",
+                28,
+                "bold"
+            )
+        )
+
+        canvas.create_text(
+            centro_x,
+            78,
+            text="PERSONAL INTELLIGENCE SYSTEM",
+            fill=COR_CIANO_ESCURO,
             font=(
                 "Consolas",
                 10
             )
         )
 
-        y += 30
+
+        # CÍRCULOS
+
+        for raio in [
+            165,
+            135,
+            105
+        ]:
+            canvas.create_oval(
+                centro_x - raio,
+                centro_y - raio,
+                centro_x + raio,
+                centro_y + raio,
+                outline=COR_CIANO_ESCURO,
+                width=1
+            )
 
 
-    # ========================================================
-    # HORA LOCAL
-    # ========================================================
+        # NÚCLEO
 
-    agora = datetime.now()
+        if falando:
+            raio_nucleo = (
+                48
+                + pulso * 15
+            )
 
-    canvas.create_text(
-        largura - 45,
-        155,
-        anchor="e",
-        text="LOCAL SYSTEM",
-        fill=COR_CIANO,
-        font=(
-            "Consolas",
-            13,
-            "bold"
-        )
-    )
+        else:
+            raio_nucleo = (
+                48
+                + pulso * 3
+            )
 
-    canvas.create_text(
-        largura - 45,
-        200,
-        anchor="e",
-        text=agora.strftime(
-            "%H:%M:%S"
-        ),
-        fill=COR_TEXTO,
-        font=(
-            "Consolas",
-            22,
-            "bold"
-        )
-    )
+        for camada in range(
+            3,
+            0,
+            -1
+        ):
+            raio_glow = (
+                raio_nucleo
+                + camada * 9
+            )
 
-    canvas.create_text(
-        largura - 45,
-        235,
-        anchor="e",
-        text=agora.strftime(
-            "%d/%m/%Y"
-        ),
-        fill=COR_CIANO_ESCURO,
-        font=(
-            "Consolas",
-            11
-        )
-    )
+            canvas.create_oval(
+                centro_x - raio_glow,
+                centro_y - raio_glow,
+                centro_x + raio_glow,
+                centro_y + raio_glow,
+                outline=COR_CIANO_ESCURO,
+                width=1
+            )
 
-
-    # ========================================================
-    # RESPOSTA NA TELA
-    # ========================================================
-
-    texto_hud = limpar_texto_para_voz(
-        ultima_fala
-    )
-
-    if len(
-        texto_hud
-    ) > 110:
-
-        texto_hud = (
-            texto_hud[:107]
-            + "..."
+        canvas.create_oval(
+            centro_x - raio_nucleo,
+            centro_y - raio_nucleo,
+            centro_x + raio_nucleo,
+            centro_y + raio_nucleo,
+            outline=COR_CIANO,
+            fill="#003642",
+            width=(
+                4
+                if falando
+                else 2
+            )
         )
 
-    canvas.create_text(
-        centro_x,
-        altura - 70,
-        text=texto_hud,
-        fill=COR_TEXTO,
-        font=(
-            "Consolas",
-            11
-        ),
-        width=(
-            largura - 200
+
+        # ONDAS QUANDO FALA
+
+        if falando:
+            for i in range(3):
+                fase = (
+                    tempo_animacao
+                    * 80
+                    + i * 28
+                ) % 90
+
+                raio_onda = (
+                    70
+                    + fase
+                )
+
+                canvas.create_oval(
+                    centro_x - raio_onda,
+                    centro_y - raio_onda,
+                    centro_x + raio_onda,
+                    centro_y + raio_onda,
+                    outline=COR_CIANO_ESCURO,
+                    width=1
+                )
+
+
+        # ARCOS ROTATIVOS
+
+        canvas.create_arc(
+            centro_x - 155,
+            centro_y - 155,
+            centro_x + 155,
+            centro_y + 155,
+            start=angulo_animacao,
+            extent=80,
+            style="arc",
+            outline=COR_CIANO,
+            width=3
         )
-    )
 
-    canvas.create_text(
-        centro_x,
-        altura - 30,
-        text="ESC para encerrar",
-        fill=COR_CIANO_ESCURO,
-        font=(
-            "Consolas",
-            9
+        canvas.create_arc(
+            centro_x - 125,
+            centro_y - 125,
+            centro_x + 125,
+            centro_y + 125,
+            start=-angulo_animacao,
+            extent=110,
+            style="arc",
+            outline=COR_CIANO,
+            width=2
         )
-    )
+
+        canvas.create_arc(
+            centro_x - 95,
+            centro_y - 95,
+            centro_x + 95,
+            centro_y + 95,
+            start=angulo_animacao * 1.5,
+            extent=65,
+            style="arc",
+            outline=COR_CIANO,
+            width=2
+        )
 
 
-    # ========================================================
-    # VELOCIDADE
-    # ========================================================
+        # MARCAS EXTERNAS
 
-    angulo_animacao = (
-        angulo_animacao
-        + velocidade
-    ) % 360
+        for angulo in range(
+            0,
+            360,
+            15
+        ):
+            rad = math.radians(
+                angulo
+                + angulo_animacao
+            )
 
+            r1 = 175
+            r2 = 185
+
+            x1 = (
+                centro_x
+                + math.cos(rad)
+                * r1
+            )
+
+            y1 = (
+                centro_y
+                + math.sin(rad)
+                * r1
+            )
+
+            x2 = (
+                centro_x
+                + math.cos(rad)
+                * r2
+            )
+
+            y2 = (
+                centro_y
+                + math.sin(rad)
+                * r2
+            )
+
+            canvas.create_line(
+                x1,
+                y1,
+                x2,
+                y2,
+                fill=(
+                    COR_CIANO
+                    if falando
+                    else COR_CIANO_ESCURO
+                ),
+                width=1
+            )
+
+
+        estado = (
+            "ONLINE"
+            if modo_ativo
+            else "STANDBY"
+        )
+
+        canvas.create_text(
+            centro_x,
+            centro_y - 18,
+            text="J.A.R.V.I.S",
+            fill=COR_TEXTO,
+            font=(
+                "Consolas",
+                15,
+                "bold"
+            )
+        )
+
+        canvas.create_text(
+            centro_x,
+            centro_y + 10,
+            text=(
+                "FALANDO"
+                if falando
+                else estado
+            ),
+            fill=COR_CIANO,
+            font=(
+                "Consolas",
+                11,
+                "bold"
+            )
+        )
+
+
+        # STATUS ESQUERDO
+
+        canvas.create_text(
+            45,
+            155,
+            anchor="w",
+            text="SYSTEM STATUS",
+            fill=COR_CIANO,
+            font=(
+                "Consolas",
+                13,
+                "bold"
+            )
+        )
+
+        informacoes = [
+            (
+                "CAMERA",
+                status_camera
+            ),
+            (
+                "HAND TRACK",
+                status_mao
+            ),
+            (
+                "VOICE",
+                status_voz
+            ),
+            (
+                "AI",
+                status_ia
+            ),
+            (
+                "MEMORY",
+                "ONLINE"
+            )
+        ]
+
+        y = 195
+
+        for nome, valor in informacoes:
+            canvas.create_text(
+                45,
+                y,
+                anchor="w",
+                text=f"{nome:<12} {valor}",
+                fill=COR_TEXTO,
+                font=(
+                    "Consolas",
+                    10
+                )
+            )
+
+            y += 30
+
+
+        # RELÓGIO DIREITO
+
+        agora = datetime.now()
+
+        canvas.create_text(
+            largura - 45,
+            155,
+            anchor="e",
+            text="LOCAL SYSTEM",
+            fill=COR_CIANO,
+            font=(
+                "Consolas",
+                13,
+                "bold"
+            )
+        )
+
+        canvas.create_text(
+            largura - 45,
+            200,
+            anchor="e",
+            text=agora.strftime(
+                "%H:%M:%S"
+            ),
+            fill=COR_TEXTO,
+            font=(
+                "Consolas",
+                22,
+                "bold"
+            )
+        )
+
+        canvas.create_text(
+            largura - 45,
+            235,
+            anchor="e",
+            text=agora.strftime(
+                "%d/%m/%Y"
+            ),
+            fill=COR_CIANO_ESCURO,
+            font=(
+                "Consolas",
+                11
+            )
+        )
+
+
+        # ÚLTIMA RESPOSTA
+
+        texto_hud = limpar_texto_para_voz(
+            ultima_fala
+        )
+
+        if len(
+            texto_hud
+        ) > 110:
+            texto_hud = (
+                texto_hud[:107]
+                + "..."
+            )
+
+        canvas.create_text(
+            centro_x,
+            altura - 70,
+            text=texto_hud,
+            fill=COR_TEXTO,
+            font=(
+                "Consolas",
+                11
+            ),
+            width=(
+                largura - 200
+            )
+        )
+
+        canvas.create_text(
+            centro_x,
+            altura - 30,
+            text="ESC para encerrar",
+            fill=COR_CIANO_ESCURO,
+            font=(
+                "Consolas",
+                9
+            )
+        )
+
+
+        angulo_animacao = (
+            angulo_animacao
+            + velocidade
+        ) % 360
+
+    except Exception as erro:
+        print(
+            "Erro HUD:",
+            erro
+        )
 
     if sistema_rodando:
-
         janela.after(
             35,
             desenhar_hud
@@ -1925,18 +2197,15 @@ def desenhar_hud():
 
 
 # ============================================================
-# CÂMERA E MÃO
+# CÂMERA E CONTROLE PELA MÃO
 # ============================================================
 
 def camera_e_mao():
-
     global status_camera
     global status_mao
     global sistema_rodando
 
-    mp_hands = (
-        mp.solutions.hands
-    )
+    mp_hands = mp.solutions.hands
 
     mp_draw = (
         mp.solutions.drawing_utils
@@ -1969,8 +2238,10 @@ def camera_e_mao():
     )
 
     if not camera.isOpened():
-
         status_camera = "ERRO"
+        status_mao = "OFFLINE"
+
+        hands.close()
 
         return
 
@@ -2005,257 +2276,252 @@ def camera_e_mao():
     )
 
     suavidade = 0.55
-
     margem = 0.12
 
     clicando = False
 
-    while sistema_rodando:
+    try:
+        while sistema_rodando:
+            sucesso, frame = camera.read()
 
-        sucesso, frame = (
-            camera.read()
-        )
+            if not sucesso:
+                continue
 
-        if not sucesso:
-
-            continue
-
-        frame = cv2.flip(
-            frame,
-            1
-        )
-
-        altura_frame, largura_frame = (
-            frame.shape[:2]
-        )
-
-        rgb = cv2.cvtColor(
-            frame,
-            cv2.COLOR_BGR2RGB
-        )
-
-        resultado = hands.process(
-            rgb
-        )
-
-        x1_area = int(
-            largura_frame
-            * margem
-        )
-
-        y1_area = int(
-            altura_frame
-            * margem
-        )
-
-        x2_area = int(
-            largura_frame
-            * (1 - margem)
-        )
-
-        y2_area = int(
-            altura_frame
-            * (1 - margem)
-        )
-
-        cv2.rectangle(
-            frame,
-            (
-                x1_area,
-                y1_area
-            ),
-            (
-                x2_area,
-                y2_area
-            ),
-            (
-                0,
-                255,
-                255
-            ),
-            1
-        )
-
-        cv2.putText(
-            frame,
-            "AREA DE CONTROLE",
-            (
-                x1_area,
-                max(
-                    20,
-                    y1_area - 8
-                )
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (
-                0,
-                255,
-                255
-            ),
-            1
-        )
-
-        if resultado.multi_hand_landmarks:
-
-            status_mao = "ONLINE"
-
-            mao = resultado.multi_hand_landmarks[
-                0
-            ]
-
-            mp_draw.draw_landmarks(
+            frame = cv2.flip(
                 frame,
-                mao,
-                mp_hands.HAND_CONNECTIONS
+                1
             )
 
-            indicador = mao.landmark[
-                8
-            ]
+            altura_frame, largura_frame = (
+                frame.shape[:2]
+            )
 
-            polegar = mao.landmark[
-                4
-            ]
+            rgb = cv2.cvtColor(
+                frame,
+                cv2.COLOR_BGR2RGB
+            )
 
-            ix = max(
-                margem,
-                min(
-                    1 - margem,
+            resultado = hands.process(
+                rgb
+            )
+
+            x1_area = int(
+                largura_frame
+                * margem
+            )
+
+            y1_area = int(
+                altura_frame
+                * margem
+            )
+
+            x2_area = int(
+                largura_frame
+                * (1 - margem)
+            )
+
+            y2_area = int(
+                altura_frame
+                * (1 - margem)
+            )
+
+            cv2.rectangle(
+                frame,
+                (
+                    x1_area,
+                    y1_area
+                ),
+                (
+                    x2_area,
+                    y2_area
+                ),
+                (
+                    0,
+                    255,
+                    255
+                ),
+                1
+            )
+
+            cv2.putText(
+                frame,
+                "AREA DE CONTROLE",
+                (
+                    x1_area,
+                    max(
+                        20,
+                        y1_area - 8
+                    )
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (
+                    0,
+                    255,
+                    255
+                ),
+                1
+            )
+
+            if resultado.multi_hand_landmarks:
+                status_mao = "ONLINE"
+
+                mao = (
+                    resultado
+                    .multi_hand_landmarks[0]
+                )
+
+                mp_draw.draw_landmarks(
+                    frame,
+                    mao,
+                    mp_hands.HAND_CONNECTIONS
+                )
+
+                indicador = mao.landmark[8]
+                polegar = mao.landmark[4]
+
+                ix = max(
+                    margem,
+                    min(
+                        1 - margem,
+                        indicador.x
+                    )
+                )
+
+                iy = max(
+                    margem,
+                    min(
+                        1 - margem,
+                        indicador.y
+                    )
+                )
+
+                nx = (
+                    ix - margem
+                ) / (
+                    1 - 2 * margem
+                )
+
+                ny = (
+                    iy - margem
+                ) / (
+                    1 - 2 * margem
+                )
+
+                alvo_x = (
+                    inicio_x
+                    + int(
+                        nx
+                        * largura_total
+                    )
+                )
+
+                alvo_y = (
+                    inicio_y
+                    + int(
+                        ny
+                        * altura_total
+                    )
+                )
+
+                cursor_x += (
+                    alvo_x - cursor_x
+                ) * suavidade
+
+                cursor_y += (
+                    alvo_y - cursor_y
+                ) * suavidade
+
+                user32.SetCursorPos(
+                    int(cursor_x),
+                    int(cursor_y)
+                )
+
+                polegar_x = int(
+                    polegar.x
+                    * largura_frame
+                )
+
+                polegar_y = int(
+                    polegar.y
+                    * altura_frame
+                )
+
+                indicador_x = int(
                     indicador.x
+                    * largura_frame
                 )
-            )
 
-            iy = max(
-                margem,
-                min(
-                    1 - margem,
+                indicador_y = int(
                     indicador.y
-                )
-            )
-
-            nx = (
-                ix - margem
-            ) / (
-                1 - 2 * margem
-            )
-
-            ny = (
-                iy - margem
-            ) / (
-                1 - 2 * margem
-            )
-
-            alvo_x = (
-                inicio_x
-                + int(
-                    nx
-                    * largura_total
-                )
-            )
-
-            alvo_y = (
-                inicio_y
-                + int(
-                    ny
-                    * altura_total
-                )
-            )
-
-            cursor_x += (
-                alvo_x
-                - cursor_x
-            ) * suavidade
-
-            cursor_y += (
-                alvo_y
-                - cursor_y
-            ) * suavidade
-
-            user32.SetCursorPos(
-                int(cursor_x),
-                int(cursor_y)
-            )
-
-            polegar_x = int(
-                polegar.x
-                * largura_frame
-            )
-
-            polegar_y = int(
-                polegar.y
-                * altura_frame
-            )
-
-            indicador_x = int(
-                indicador.x
-                * largura_frame
-            )
-
-            indicador_y = int(
-                indicador.y
-                * altura_frame
-            )
-
-            distancia = math.hypot(
-                polegar_x
-                - indicador_x,
-                polegar_y
-                - indicador_y
-            )
-
-            if (
-                distancia < 40
-                and not clicando
-            ):
-
-                user32.mouse_event(
-                    0x0002,
-                    0,
-                    0,
-                    0,
-                    0
+                    * altura_frame
                 )
 
-                user32.mouse_event(
-                    0x0004,
-                    0,
-                    0,
-                    0,
-                    0
+                distancia = math.hypot(
+                    polegar_x
+                    - indicador_x,
+                    polegar_y
+                    - indicador_y
                 )
 
-                clicando = True
+                if (
+                    distancia < 40
+                    and not clicando
+                ):
+                    user32.mouse_event(
+                        0x0002,
+                        0,
+                        0,
+                        0,
+                        0
+                    )
 
-            elif distancia > 55:
+                    user32.mouse_event(
+                        0x0004,
+                        0,
+                        0,
+                        0,
+                        0
+                    )
 
-                clicando = False
+                    clicando = True
 
-        else:
+                elif distancia > 55:
+                    clicando = False
 
-            status_mao = "PROCURANDO"
+            else:
+                status_mao = "PROCURANDO"
 
-        cv2.imshow(
-            "J.A.R.V.I.S - Camera",
-            frame
+            cv2.imshow(
+                "J.A.R.V.I.S - Camera",
+                frame
+            )
+
+            tecla = (
+                cv2.waitKey(1)
+                & 0xFF
+            )
+
+            if tecla == 27:
+                sistema_rodando = False
+                break
+
+    except Exception as erro:
+        print(
+            "Erro câmera/mão:",
+            erro
         )
 
-        tecla = (
-            cv2.waitKey(1)
-            & 0xFF
-        )
+        status_camera = "ERRO"
 
-        if tecla == 27:
+    finally:
+        camera.release()
+        hands.close()
 
-            sistema_rodando = False
-
-            break
-
-    camera.release()
-
-    hands.close()
-
-    cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -2263,15 +2529,12 @@ def camera_e_mao():
 # ============================================================
 
 def sistema_de_voz():
-
     global modo_ativo
     global status_voz
     global ultima_fala
 
     try:
-
         with microfone as fonte:
-
             status_voz = "CALIBRANDO"
 
             reconhecedor.adjust_for_ambient_noise(
@@ -2279,14 +2542,18 @@ def sistema_de_voz():
                 duration=1
             )
 
+            reconhecedor.dynamic_energy_threshold = True
+
             status_voz = "ESPERA"
 
             while sistema_rodando:
 
+                # ============================================
+                # MODO DE ESPERA
+                # ============================================
+
                 if not modo_ativo:
-
                     try:
-
                         audio = reconhecedor.listen(
                             fonte,
                             timeout=3,
@@ -2296,6 +2563,11 @@ def sistema_de_voz():
                         texto = reconhecedor.recognize_google(
                             audio,
                             language="pt-BR"
+                        )
+
+                        print(
+                            "Ouvido em espera:",
+                            texto
                         )
 
                         texto_normal = normalizar(
@@ -2309,7 +2581,6 @@ def sistema_de_voz():
                         )
 
                         if ativou:
-
                             modo_ativo = True
 
                             falar(
@@ -2317,18 +2588,27 @@ def sistema_de_voz():
                             )
 
                     except sr.WaitTimeoutError:
-
                         pass
 
                     except sr.UnknownValueError:
-
                         pass
+
+                    except sr.RequestError as erro:
+                        print(
+                            "Erro reconhecimento:",
+                            erro
+                        )
+
+                        time.sleep(2)
 
                     continue
 
 
-                try:
+                # ============================================
+                # MODO CONVERSA
+                # ============================================
 
+                try:
                     status_voz = "OUVINDO"
 
                     audio = reconhecedor.listen(
@@ -2342,6 +2622,7 @@ def sistema_de_voz():
                         language="pt-BR"
                     )
 
+                    print("")
                     print(
                         "Senhor:",
                         pergunta
@@ -2358,35 +2639,29 @@ def sistema_de_voz():
                     )
 
                     if dormir:
-
                         falar(
                             "Como desejar senhor"
                         )
 
                         modo_ativo = False
-
                         status_voz = "ESPERA"
 
                         continue
 
-                    status_voz = "PENSANDO"
+                    status_voz = "PROCESSANDO"
 
                     resposta = responder(
                         pergunta
                     )
 
-                    resposta = limpar_texto_para_voz(
-                        resposta
-                    )
-
-                    ultima_fala = resposta
+                    if not resposta:
+                        resposta = (
+                            "Senhor, não consegui "
+                            "formular uma resposta."
+                        )
 
                     print(
-                        "J.A.R.V.I.S.:",
-                        resposta
-                    )
-
-                    falar(
+                        "JARVIS:",
                         resposta
                     )
 
@@ -2395,18 +2670,29 @@ def sistema_de_voz():
                         resposta
                     )
 
-                except sr.WaitTimeoutError:
+                    falar(
+                        resposta
+                    )
 
+                except sr.WaitTimeoutError:
                     status_voz = "CONVERSA"
 
                 except sr.UnknownValueError:
-
                     status_voz = "CONVERSA"
 
-    except Exception as erro:
+                except sr.RequestError as erro:
+                    print(
+                        "Erro reconhecimento:",
+                        erro
+                    )
 
+                    status_voz = "ERRO"
+
+                    time.sleep(2)
+
+    except Exception as erro:
         print(
-            "ERRO VOZ:",
+            "Erro no sistema de voz:",
             erro
         )
 
@@ -2417,54 +2703,59 @@ def sistema_de_voz():
 # ENCERRAR
 # ============================================================
 
-def fechar_sistema():
-
+def encerrar(event=None):
     global sistema_rodando
 
     sistema_rodando = False
 
     try:
-
         pygame.mixer.music.stop()
-
-        pygame.mixer.quit()
-
-    except:
-
+    except Exception:
         pass
 
     try:
-
         cv2.destroyAllWindows()
-
-    except:
-
+    except Exception:
         pass
 
     try:
-
-        janela.destroy()
-
-    except:
-
+        janela.after(
+            150,
+            janela.destroy
+        )
+    except Exception:
         pass
+
+
+def verificar_sistema():
+    if not sistema_rodando:
+        try:
+            janela.destroy()
+        except Exception:
+            pass
+
+        return
+
+    janela.after(
+        250,
+        verificar_sistema
+    )
 
 
 # ============================================================
-# INICIAR
+# INICIALIZAÇÃO
 # ============================================================
 
 criar_banco_memoria()
 
-janela.protocol(
-    "WM_DELETE_WINDOW",
-    fechar_sistema
-)
-
 janela.bind(
     "<Escape>",
-    lambda evento:
-        fechar_sistema()
+    encerrar
+)
+
+janela.protocol(
+    "WM_DELETE_WINDOW",
+    encerrar
 )
 
 thread_camera = threading.Thread(
@@ -2478,9 +2769,18 @@ thread_voz = threading.Thread(
 )
 
 thread_camera.start()
-
 thread_voz.start()
 
 desenhar_hud()
+verificar_sistema()
 
-janela.mainloop()
+try:
+    janela.mainloop()
+
+finally:
+    sistema_rodando = False
+
+    try:
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
